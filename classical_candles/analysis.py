@@ -27,6 +27,7 @@ class AudioFeatures:
     centroid: np.ndarray         # spectral centroid (Hz), one per frame
     pitch_hz: np.ndarray         # estimated fundamental pitch (NaN if unvoiced)
     duration: float              # seconds
+    tempo: float                 # estimated tempo in BPM
 
 
 def analyze_audio(path: str, hop_length: int = 512, sr: int = 22050,
@@ -53,6 +54,13 @@ def analyze_audio(path: str, hop_length: int = 512, sr: int = 22050,
 
     report("Measuring spectral brightness...")
     centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
+
+    report("Estimating tempo...")
+    try:
+        tempo_arr = librosa.feature.tempo(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
+    except AttributeError:
+        tempo_arr = librosa.beat.tempo(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
+    tempo = float(tempo_arr[0]) if len(tempo_arr) else 90.0
 
     n_frames = min(len(rms), len(onset_env), len(centroid))
 
@@ -83,4 +91,5 @@ def analyze_audio(path: str, hop_length: int = 512, sr: int = 22050,
         centroid=centroid[:n_frames],
         pitch_hz=f0[:n_frames],
         duration=float(duration),
+        tempo=tempo,
     )

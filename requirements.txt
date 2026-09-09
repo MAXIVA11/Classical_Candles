@@ -4,3 +4,4 @@ matplotlib>=3.7
 soundfile>=0.12
 yt-dlp>=2024.1.1
 tqdm>=4.66
+flask>=3.0

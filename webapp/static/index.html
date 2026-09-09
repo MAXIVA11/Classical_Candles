@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classical Candles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="tape-bar" aria-hidden="true">
+  <div class="tape-track" id="tapeTrack"></div>
+</div>
+
+<main class="stage">
+  <header class="hero">
+    <p class="eyebrow">A Trading Floor for the Concert Hall</p>
+    <h1 class="wordmark">Classical<br>Candles</h1>
+    <p class="tagline">Paste a recording. When the strings turn sharp, the market moves.</p>
+  </header>
+
+  <section class="machine" id="machine">
+    <div class="machine-plate">
+      <div class="machine-brand">
+        <span class="dot"></span> LIVE FEED &middot; OPENING BELL DESK
+      </div>
+
+      <form id="tickerForm" class="slot-form" autocomplete="off">
+        <label for="urlInput" class="slot-label">Feed the exchange a YouTube link</label>
+        <div class="slot">
+          <svg class="slot-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 7.2s-.2-1.5-.8-2.2c-.8-.9-1.7-.9-2.1-1C15.9 3.7 12 3.7 12 3.7h0s-3.9 0-6.7.3c-.4 0-1.3.1-2.1 1-.6.7-.8 2.2-.8 2.2S2.2 9 2.2 10.7v1.6C2.2 14 2.4 15.8 2.4 15.8s.2 1.5.8 2.2c.8.9 1.9.9 2.3 1 1.7.2 7.1.3 7.1.3s3.9 0 6.7-.3c.4 0 1.3-.1 2.1-1 .6-.7.8-2.2.8-2.2s.2-1.7.2-3.5v-1.6c0-1.7-.2-3.5-.2-3.5zM9.9 14.6V8.4l5.4 3.1z"/></svg>
+          <input id="urlInput" name="url" type="url" inputmode="url"
+                 placeholder="https://www.youtube.com/watch?v=..." required>
+        </div>
+        <button type="submit" class="bell-button" id="bellButton">
+          <span class="bell-glyph" aria-hidden="true">&#9835;</span>
+          Ring the Opening Bell
+        </button>
+        <p class="form-hint" id="formHint">One link. We handle the tempo, the ticker, and the tape.</p>
+      </form>
+
+      <div class="tape-roll" id="tapeRoll" hidden>
+        <div class="tape-strip" id="tapeStrip"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="certificate" id="certificate" hidden>
+    <div class="certificate-corner tl" aria-hidden="true"></div>
+    <div class="certificate-corner tr" aria-hidden="true"></div>
+    <div class="certificate-corner bl" aria-hidden="true"></div>
+    <div class="certificate-corner br" aria-hidden="true"></div>
+
+    <div class="certificate-head">
+      <div>
+        <p class="cert-exchange" id="certExchange">&mdash;</p>
+        <h2 class="cert-symbol" id="certSymbol">&mdash;</h2>
+        <p class="cert-issuer" id="certIssuer">&mdash;</p>
+      </div>
+      <div class="cert-change" id="certChange">
+        <span class="cert-change-arrow" id="certArrow">&#9650;</span>
+        <span id="certChangePct">0.0%</span>
+      </div>
+    </div>
+
+    <div class="cert-chart-frame">
+      <canvas id="liveCanvas"></canvas>
+      <div class="live-readout">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="liveElapsed">0:00</span> / <span id="liveTotal">0:00</span>
+      </div>
+    </div>
+
+    <audio id="certAudio" controls preload="metadata"></audio>
+
+    <dl class="cert-stats" id="certStats">
+      <div><dt>Open</dt><dd id="statOpen">&mdash;</dd></div>
+      <div><dt>Close</dt><dd id="statClose">&mdash;</dd></div>
+      <div><dt>High</dt><dd id="statHigh">&mdash;</dd></div>
+      <div><dt>Low</dt><dd id="statLow">&mdash;</dd></div>
+      <div><dt>Tempo</dt><dd id="statTempo">&mdash;</dd></div>
+      <div><dt>Duration</dt><dd id="statDuration">&mdash;</dd></div>
+      <div><dt>Volume</dt><dd id="statVolume">&mdash;</dd></div>
+      <div><dt>Candles</dt><dd id="statCandles">&mdash;</dd></div>
+    </dl>
+
+    <div class="cert-actions">
+      <button id="videoButton" class="ghost-button" type="button">Save as Video</button>
+      <button id="againButton" class="ghost-button" type="button">List Another Piece</button>
+    </div>
+    <p class="video-status" id="videoStatus" hidden></p>
+  </section>
+
+  <p class="error" id="errorBanner" hidden></p>
+</main>
+
+<footer class="fine-print">
+  <p>Not financial advice. Past performance of the Moonlight Sonata is no guarantee of future adagios.</p>
+  <a href="https://github.com/MAXIVA11/Classical_Candles" target="_blank" rel="noopener">View source on GitHub</a>
+</footer>
+
+<script src="chart.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
