@@ -1,21 +1,26 @@
 """Map musical features into OHLCV candlestick data.
 
-The mapping (the heart of "Classical Candles"):
+Real stocks aren't a smooth curve -- they're a *random walk with drift*:
+mostly noise, tick to tick, with a bias that only becomes visible once it
+accumulates over many bars. That's the actual model used here, not just a
+figure of speech:
 
-  - Melody direction decides bullish vs bearish, but the trend has momentum:
-    a smoothed pitch slope carries over between candles instead of flipping
-    sign on every tiny wobble, the way a real stock's direction persists for
-    a while instead of reversing every single tick.
-  - Trading volume -- how many "market participants" are active -- comes
-    from both loudness AND note density (how many attacks land per second).
-    A wall of fast notes means heavy trading, same as a busy order book.
-  - Volume in turn amplifies price movement: busy, well-traded passages get
-    bigger candle bodies and longer wicks, quiet passages barely move, just
-    like real volume-price relationships. There's always a small baseline
-    wiggle so even the calmest adagio still looks like a living market
-    instead of a dead flat line.
-  - Spectral brightness (centroid) adds extra wick length on top of that --
-    bright, percussive transients read as a sudden intrabar spike/rejection.
+    return_for_this_candle = drift + volatility * random_normal()
+
+  - `drift` is small and comes from the melody: a smoothed pitch trend plus
+    a bit of carried-over momentum, so an ascending passage nudges the price
+    up over time. It is deliberately kept weaker than the noise term --
+    a real uptrend is still full of red candles along the way.
+  - `volatility` (how big the random swings are allowed to be) comes from
+    onset sharpness/density and trading volume: a fast, busy passage gets
+    wide, jagged bars, a calm one gets small, quiet ones. It never hits
+    exactly zero, so even an adagio still breathes.
+  - Trading volume itself -- how many "market participants" are active --
+    is loudness blended with note density: a wall of fast notes reads as a
+    busy, liquid market the same way sheer loudness does.
+  - Spectral brightness (centroid) adds extra, asymmetric wick length on
+    top of that: bright, percussive transients read as a sudden intrabar
+    spike or rejection, same as a real high/low that the close doesn't hold.
 """
 
 from __future__ import annotations
@@ -140,42 +145,45 @@ def build_candles(
         intensity = float(np.clip(0.5 * sharpness + 0.5 * density, 0.0, 1.0))
         volume = float(volume_by_bin[b])
 
-        # Momentum carries part of the previous move forward, so a trend
-        # that's underway tends to keep going for a few candles instead of
-        # reversing every bin -- real markets trend, they don't zigzag.
+        # Momentum carries part of the previous move forward -- a melodic
+        # trend that's underway keeps nudging the drift for a few candles
+        # instead of vanishing the instant the raw slope wobbles.
         trend_signal = 0.65 * pitch_delta + 0.35 * momentum
         momentum = 0.6 * momentum + 0.4 * pitch_delta
 
-        if abs(trend_signal) > 0.015:
-            direction = 1.0 if trend_signal > 0 else -1.0
-            direction_strength = min(abs(trend_signal) / 4.0, 1.0)  # ~a third octave = max
-        else:
-            # No clear melodic trend (sustained/percussive/silent passage):
-            # a little deterministic noise keeps the market breathing
-            # instead of flatlining dead still.
-            direction = 1.0 if rng.normal(0, 1) >= 0 else -1.0
-            direction_strength = 0.12
+        # Drift: a gentle, musically-driven bias. Deliberately small --
+        # this is what accumulates into a visible trend over many candles,
+        # it should not by itself decide any single candle's color.
+        drift = max_move_pct * 0.35 * np.clip(trend_signal / 3.0, -1.0, 1.0)
 
-        # Volume amplifies the move, the way real breakouts come on heavy
-        # volume and quiet sessions barely move at all. A floor keeps even
-        # the quietest passage visibly alive rather than a dead flat line.
-        volume_kick = 0.45 + 0.55 * volume
-        body_pct = (
-            max_move_pct
-            * (0.12 + 0.88 * intensity)
-            * (0.35 + 0.65 * direction_strength)
-            * volume_kick
-        )
-        close_p = open_p * (1.0 + direction * body_pct)
+        # Volatility: how wide this candle's random swing is allowed to be.
+        # Busy, sharp, well-traded passages get wide bars; quiet ones get
+        # small ones, but never all the way down to zero -- a real market
+        # never trades in a perfectly straight line.
+        volatility = max_move_pct * (0.22 + 0.85 * intensity) * (0.45 + 0.55 * volume)
 
-        wick_pct = (
+        # The random walk step itself. This is what actually makes it look
+        # like a stock and not a smoothed curve: every candle gets its own
+        # independent noise draw, so bar-to-bar size and direction jump
+        # around even while the drift slowly leans the whole thing one way.
+        shock = rng.standard_normal()
+        raw_return = drift + volatility * shock
+        body_pct_signed = float(np.clip(raw_return, -max_move_pct * 3.2, max_move_pct * 3.2))
+
+        close_p = open_p * (1.0 + body_pct_signed)
+
+        # Wicks: an intrabar excursion beyond the close, asymmetric like a
+        # real bar (upper and lower shadows are rarely the same length).
+        wick_base = (
             max_wick_pct
             * (0.2 + 0.8 * centroid_by_bin[b])
             * (0.3 + 0.7 * sharpness)
             * (0.5 + 0.5 * volume)
         )
-        hi = max(open_p, close_p) * (1.0 + wick_pct)
-        lo = min(open_p, close_p) * (1.0 - wick_pct)
+        upper_wick_pct = wick_base * rng.uniform(0.4, 1.4)
+        lower_wick_pct = wick_base * rng.uniform(0.4, 1.4)
+        hi = max(open_p, close_p) * (1.0 + upper_wick_pct)
+        lo = min(open_p, close_p) * (1.0 - lower_wick_pct)
 
         series.candles.append(
             Candle(

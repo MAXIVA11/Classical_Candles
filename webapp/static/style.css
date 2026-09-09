@@ -450,18 +450,6 @@ audio#certAudio {
   font-size: 0.9rem;
 }
 
-/* ---------- footer ---------- */
-
-.fine-print {
-  text-align: center;
-  padding: 1rem 1.5rem 2.5rem;
-  font-size: 0.78rem;
-  color: var(--ivory-dim);
-}
-
-.fine-print p { margin: 0 0 0.5rem; font-style: italic; }
-.fine-print a { color: var(--brass); }
-
 /* ---------- responsive ---------- */
 
 @media (max-width: 560px) {
