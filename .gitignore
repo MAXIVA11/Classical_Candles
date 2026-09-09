@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Downloaded/generated media (large, user-specific)
+cache/*
+!cache/.gitkeep
+output/*
+!output/.gitkeep
+
+.DS_Store
+Thumbs.db
