@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🕯️ Classical Candles
+# 🕯️📈 Classical Candles
 
 **Classical music, traded live as a stock chart.**
 
@@ -10,7 +10,7 @@ Paste a YouTube link. Sharp violin runs rally the price. A falling melody dumps 
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![Offline](https://img.shields.io/badge/runs-100%25%20offline-purple)
 
-![Classical Candles screenshot](assets/screenshot.png)
+![Classical Candles screenshot](assets/screenshot_mac.png)
 
 </div>
 
@@ -19,11 +19,11 @@ Paste a YouTube link. Sharp violin runs rally the price. A falling melody dumps 
 ```bash
 git clone https://github.com/MAXIVA11/Classical_Candles.git
 cd Classical_Candles
-pip install -r requirements.txt
+./setup.sh          # Windows: setup.bat
 python webapp/server.py
 ```
 
-Open **http://127.0.0.1:5000**, paste a link, ring the bell. Requires [FFmpeg](https://ffmpeg.org/download.html) on your `PATH`.
+Open **http://127.0.0.1:5000**, paste a link, ring the bell. The setup script creates a virtualenv and checks for [FFmpeg](https://ffmpeg.org/download.html), which you'll need on your `PATH`.
 
 ## How the market moves
 
