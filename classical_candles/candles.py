@@ -2,14 +2,20 @@
 
 The mapping (the heart of "Classical Candles"):
 
-  - Melody direction (pitch rising vs falling between bins) decides whether
-    the candle is bullish (green, close > open) or bearish (red, close < open).
-  - Onset strength + onset density (how sharp AND how frequent the note
-    attacks are -- think a fast, sharply bowed violin run) drive how big the
-    candle body is. Sharp + fast passages => big, fast price moves.
-  - Spectral brightness (centroid) drives wick length -- bright, percussive
-    transients create long wicks, like a sudden spike/rejection in price.
-  - Loudness (RMS) becomes the volume bar under each candle.
+  - Melody direction decides bullish vs bearish, but the trend has momentum:
+    a smoothed pitch slope carries over between candles instead of flipping
+    sign on every tiny wobble, the way a real stock's direction persists for
+    a while instead of reversing every single tick.
+  - Trading volume -- how many "market participants" are active -- comes
+    from both loudness AND note density (how many attacks land per second).
+    A wall of fast notes means heavy trading, same as a busy order book.
+  - Volume in turn amplifies price movement: busy, well-traded passages get
+    bigger candle bodies and longer wicks, quiet passages barely move, just
+    like real volume-price relationships. There's always a small baseline
+    wiggle so even the calmest adagio still looks like a living market
+    instead of a dead flat line.
+  - Spectral brightness (centroid) adds extra wick length on top of that --
+    bright, percussive transients read as a sudden intrabar spike/rejection.
 """
 
 from __future__ import annotations
@@ -99,39 +105,77 @@ def build_candles(
         else:
             last = pitch_filled[b]
 
+    # Smooth the pitch line itself before taking slopes from it. Raw
+    # semitone-to-semitone jumps are jittery (vibrato, tracking noise); an
+    # EMA of the pitch line gives a much steadier trend to react to, the
+    # same way a real ticker reacts to a moving average, not tick noise.
+    pitch_ema = pitch_filled.copy()
+    ema_alpha = 0.35
+    for b in range(1, n_bins):
+        if np.isnan(pitch_ema[b]):
+            pitch_ema[b] = pitch_ema[b - 1]
+        elif not np.isnan(pitch_ema[b - 1]):
+            pitch_ema[b] = ema_alpha * pitch_ema[b] + (1 - ema_alpha) * pitch_ema[b - 1]
+
+    # "Volume" = how many market participants are trading. Loudness alone
+    # isn't a great proxy (a single sustained loud note isn't busy trading),
+    # so blend in note density: lots of attacks per second reads as a busy,
+    # liquid market the same way loudness does.
+    volume_by_bin = np.clip(0.55 * rms_by_bin + 0.45 * onset_density_by_bin, 0.0, 1.0)
+
     series = CandleSeries(start_price=start_price)
     price = start_price
     rng = np.random.default_rng(42)  # deterministic "market noise"
+    momentum = 0.0
 
     for b in range(n_bins):
         open_p = price
 
         pitch_delta = 0.0
-        if b > 0 and not np.isnan(pitch_filled[b]) and not np.isnan(pitch_filled[b - 1]):
-            pitch_delta = pitch_filled[b] - pitch_filled[b - 1]
+        if b > 0 and not np.isnan(pitch_ema[b]) and not np.isnan(pitch_ema[b - 1]):
+            pitch_delta = pitch_ema[b] - pitch_ema[b - 1]
 
         sharpness = onset_by_bin[b]
         density = onset_density_by_bin[b]
         intensity = float(np.clip(0.5 * sharpness + 0.5 * density, 0.0, 1.0))
+        volume = float(volume_by_bin[b])
 
-        if abs(pitch_delta) > 0.05:
-            direction = 1.0 if pitch_delta > 0 else -1.0
-            direction_strength = min(abs(pitch_delta) / 6.0, 1.0)  # ~half octave = max
+        # Momentum carries part of the previous move forward, so a trend
+        # that's underway tends to keep going for a few candles instead of
+        # reversing every bin -- real markets trend, they don't zigzag.
+        trend_signal = 0.65 * pitch_delta + 0.35 * momentum
+        momentum = 0.6 * momentum + 0.4 * pitch_delta
+
+        if abs(trend_signal) > 0.015:
+            direction = 1.0 if trend_signal > 0 else -1.0
+            direction_strength = min(abs(trend_signal) / 4.0, 1.0)  # ~a third octave = max
         else:
-            # No clear melodic direction (e.g. sustained/percussive/silent):
-            # let loudness swings + a little deterministic noise decide it.
-            drift = rms_by_bin[b] - (rms_by_bin[b - 1] if b > 0 else rms_by_bin[b])
-            direction = 1.0 if (drift + rng.normal(0, 0.05)) >= 0 else -1.0
-            direction_strength = 0.3
+            # No clear melodic trend (sustained/percussive/silent passage):
+            # a little deterministic noise keeps the market breathing
+            # instead of flatlining dead still.
+            direction = 1.0 if rng.normal(0, 1) >= 0 else -1.0
+            direction_strength = 0.12
 
-        body_pct = max_move_pct * (0.15 + 0.85 * intensity) * (0.4 + 0.6 * direction_strength)
+        # Volume amplifies the move, the way real breakouts come on heavy
+        # volume and quiet sessions barely move at all. A floor keeps even
+        # the quietest passage visibly alive rather than a dead flat line.
+        volume_kick = 0.45 + 0.55 * volume
+        body_pct = (
+            max_move_pct
+            * (0.12 + 0.88 * intensity)
+            * (0.35 + 0.65 * direction_strength)
+            * volume_kick
+        )
         close_p = open_p * (1.0 + direction * body_pct)
 
-        wick_pct = max_wick_pct * (0.2 + 0.8 * centroid_by_bin[b]) * (0.3 + 0.7 * sharpness)
+        wick_pct = (
+            max_wick_pct
+            * (0.2 + 0.8 * centroid_by_bin[b])
+            * (0.3 + 0.7 * sharpness)
+            * (0.5 + 0.5 * volume)
+        )
         hi = max(open_p, close_p) * (1.0 + wick_pct)
         lo = min(open_p, close_p) * (1.0 - wick_pct)
-
-        volume = rms_by_bin[b]
 
         series.candles.append(
             Candle(

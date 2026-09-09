@@ -34,7 +34,7 @@ Open **http://127.0.0.1:5000**, paste a link, ring the bell. The setup script cr
 | Fast, sharp notes | Big candle, high volatility |
 | Slow, sustained notes | Small candle, quiet market |
 | Bright, percussive hits | Long wick |
-| Loud passage | Tall volume bar |
+| Loud + busy passage | Tall volume bar, bigger moves (real markets trade the same way) |
 | Tempo | Sets candle speed |
 | Title | Becomes the ticker, exchange, and IPO price |
 
