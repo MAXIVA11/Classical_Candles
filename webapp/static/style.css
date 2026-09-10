@@ -336,6 +336,45 @@ body {
 .cert-change.bear { color: var(--bear); }
 .cert-change-arrow.down { display: inline-block; transform: rotate(180deg); }
 
+.market-wire {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: #0e0608;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  margin-bottom: 0.9rem;
+  overflow: hidden;
+}
+
+.market-wire-label {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  color: var(--curtain);
+  background: var(--brass);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.market-wire-text {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--ivory);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: wire-in 0.4s ease both;
+}
+
+@keyframes wire-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .cert-chart-frame {
   position: relative;
   border: 1px solid var(--hairline);
@@ -379,6 +418,67 @@ audio#certAudio {
   width: 100%;
   margin-bottom: 1.4rem;
   accent-color: var(--brass);
+}
+
+.sector-desk {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.7rem;
+  margin-bottom: 1.4rem;
+}
+
+.sector-card {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  padding: 0.7rem 0.8rem 0.5rem;
+}
+
+.sector-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.3rem;
+}
+
+.sector-card-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ivory-dim);
+}
+
+.sector-card-symbol {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--brass);
+}
+
+.sector-card-price {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.sector-card-pct {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  margin-left: 0.4rem;
+}
+
+.sector-card canvas {
+  display: block;
+  width: 100%;
+  height: 40px;
+  margin-top: 0.35rem;
+}
+
+.video-status {
+  margin-top: 0.8rem;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ivory-dim);
 }
 
 .video-status {
@@ -454,13 +554,14 @@ audio#certAudio {
 
 @media (max-width: 560px) {
   .cert-stats { grid-template-columns: repeat(2, 1fr); }
+  .sector-desk { grid-template-columns: 1fr; }
   .stage { padding-top: 3rem; }
 }
 
 /* ---------- reduced motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .tape-track, .dot, .certificate, .tape-line, .bell-button {
+  .tape-track, .dot, .certificate, .tape-line, .bell-button, .market-wire-text, .live-dot.playing {
     animation: none !important;
     transition: none !important;
   }

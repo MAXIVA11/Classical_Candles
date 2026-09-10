@@ -191,3 +191,93 @@ class LiveCandleChart {
 }
 
 window.LiveCandleChart = LiveCandleChart;
+
+/* Lightweight sparkline for the sector-desk cards: a filled trend line
+ * (not full candles -- these are small), reading the same [t, o, h, l, c, v]
+ * candle array and driven by the same currentTime as the main chart. */
+class SectorSparkline {
+  constructor(canvas, { candles, candleDuration, startPrice }) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.candles = candles;
+    this.candleDuration = candleDuration;
+    this.startPrice = startPrice;
+    this.colors = { bull: "#56a67e", bear: "#c1443c" };
+    this._resize();
+    this._resizeHandler = () => this._resize();
+    window.addEventListener("resize", this._resizeHandler);
+  }
+
+  destroy() {
+    window.removeEventListener("resize", this._resizeHandler);
+  }
+
+  _resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.canvas.getBoundingClientRect();
+    this.canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    this.canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.w = rect.width;
+    this.h = rect.height;
+  }
+
+  currentClose(currentTime) {
+    const idxEnd = Math.max(0, Math.min(Math.floor(currentTime / this.candleDuration), this.candles.length - 1));
+    const cur = this.candles[idxEnd];
+    const frac = Math.max(0, Math.min(1, (currentTime - cur[0]) / this.candleDuration));
+    return cur[1] + (cur[4] - cur[1]) * (1 - (1 - frac) * (1 - frac));
+  }
+
+  draw(currentTime) {
+    const { ctx, w, h } = this;
+    const windowSeconds = 18;
+    const idxEnd = Math.max(0, Math.min(Math.floor(currentTime / this.candleDuration), this.candles.length - 1));
+    const idxStart = Math.max(0, idxEnd - Math.round(windowSeconds / this.candleDuration));
+    const points = [];
+    for (let i = idxStart; i < idxEnd; i++) points.push(this.candles[i][4]);
+    points.push(this.currentClose(currentTime));
+
+    ctx.clearRect(0, 0, w, h);
+    if (points.length < 2) return;
+
+    let lo = Math.min(...points), hi = Math.max(...points);
+    const pad = (hi - lo) * 0.15 || hi * 0.02 || 1;
+    lo -= pad; hi += pad;
+
+    const color = points[points.length - 1] >= this.startPrice ? this.colors.bull : this.colors.bear;
+    const x = (i) => (i / (points.length - 1)) * w;
+    const y = (v) => h - ((v - lo) / (hi - lo)) * h;
+
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, color + "55");
+    grad.addColorStop(1, color + "00");
+
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(points[0]));
+    for (let i = 1; i < points.length; i++) ctx.lineTo(x(i), y(points[i]));
+    ctx.lineTo(w, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(points[0]));
+    for (let i = 1; i < points.length; i++) ctx.lineTo(x(i), y(points[i]));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const lastX = x(points.length - 1), lastY = y(points[points.length - 1]);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+window.SectorSparkline = SectorSparkline;

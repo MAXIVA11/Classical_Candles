@@ -10,7 +10,12 @@ figure of speech:
   - `drift` is small and comes from the melody: a smoothed pitch trend plus
     a bit of carried-over momentum, so an ascending passage nudges the price
     up over time. It is deliberately kept weaker than the noise term --
-    a real uptrend is still full of red candles along the way.
+    a real uptrend is still full of red candles along the way. This drift
+    signal (see `compute_trend_signal`) is computed once from the full mix
+    and can be shared across several series -- see sectors.py, where the
+    frequency-band "sectors" all lean on the same market-wide drift but
+    each draw their own independent noise, the way real sector stocks move
+    together on macro sentiment but diverge on idiosyncratic volatility.
   - `volatility` (how big the random swings are allowed to be) comes from
     onset sharpness/density and trading volume: a fast, busy passage gets
     wide, jagged bars, a calm one gets small, quiet ones. It never hits
@@ -58,15 +63,8 @@ def _minmax_norm(x: np.ndarray) -> np.ndarray:
     return np.clip((x - lo) / (hi - lo), 0.0, 1.0)
 
 
-def build_candles(
-    features: AudioFeatures,
-    candle_duration: float = 0.4,
-    start_price: float = 100.0,
-    max_move_pct: float = 0.045,
-    max_wick_pct: float = 0.02,
-) -> CandleSeries:
-    """Bin frame-level audio features into a sequence of OHLCV candles."""
-
+def _bin_features(features: AudioFeatures, candle_duration: float) -> dict:
+    """Group frame-level features into fixed-size time bins, one per candle."""
     n_bins = max(1, int(np.ceil(features.duration / candle_duration)))
     bin_edges = np.arange(n_bins + 1) * candle_duration
     bin_idx = np.clip(
@@ -100,8 +98,27 @@ def build_candles(
         if len(voiced) > 0:
             pitch_by_bin[b] = float(np.mean(12.0 * np.log2(voiced / 440.0)))
 
-    # Fill unvoiced bins with the previous known pitch so direction can
-    # still be inferred smoothly across silences/percussive passages.
+    return dict(
+        n_bins=n_bins,
+        onset_by_bin=onset_by_bin,
+        onset_density_by_bin=onset_density_by_bin,
+        rms_by_bin=rms_by_bin,
+        centroid_by_bin=centroid_by_bin,
+        pitch_by_bin=pitch_by_bin,
+    )
+
+
+def compute_trend_signal(features: AudioFeatures, candle_duration: float) -> np.ndarray:
+    """The melodic drift/momentum signal that biases price direction.
+
+    Computed once from the full mix, this can be handed to several calls
+    of `build_candles` (an index and its sectors) so they all lean on the
+    same underlying "market sentiment" while drawing independent noise.
+    """
+    binned = _bin_features(features, candle_duration)
+    n_bins = binned["n_bins"]
+    pitch_by_bin = binned["pitch_by_bin"]
+
     last = np.nan
     pitch_filled = pitch_by_bin.copy()
     for b in range(n_bins):
@@ -122,6 +139,56 @@ def build_candles(
         elif not np.isnan(pitch_ema[b - 1]):
             pitch_ema[b] = ema_alpha * pitch_ema[b] + (1 - ema_alpha) * pitch_ema[b - 1]
 
+    trend_signal = np.zeros(n_bins)
+    momentum = 0.0
+    for b in range(n_bins):
+        pitch_delta = 0.0
+        if b > 0 and not np.isnan(pitch_ema[b]) and not np.isnan(pitch_ema[b - 1]):
+            pitch_delta = pitch_ema[b] - pitch_ema[b - 1]
+        # Momentum carries part of the previous move forward -- a melodic
+        # trend that's underway keeps nudging the drift for a few candles
+        # instead of vanishing the instant the raw slope wobbles.
+        trend_signal[b] = 0.65 * pitch_delta + 0.35 * momentum
+        momentum = 0.6 * momentum + 0.4 * pitch_delta
+
+    return trend_signal
+
+
+def build_candles(
+    features: AudioFeatures,
+    candle_duration: float = 0.4,
+    start_price: float = 100.0,
+    max_move_pct: float = 0.045,
+    max_wick_pct: float = 0.02,
+    trend_signal: np.ndarray | None = None,
+    rng_seed: int = 42,
+) -> CandleSeries:
+    """Bin frame-level audio features into a sequence of OHLCV candles.
+
+    `trend_signal` lets a caller supply a precomputed drift/momentum curve
+    (see `compute_trend_signal`) instead of deriving one from `features`'
+    own pitch track -- used to share one market-wide drift across an index
+    and its sectors. `rng_seed` varies the independent noise draw between
+    series that share a drift, so they diverge instead of moving in lockstep.
+    """
+
+    binned = _bin_features(features, candle_duration)
+    n_bins = binned["n_bins"]
+    onset_by_bin = binned["onset_by_bin"]
+    onset_density_by_bin = binned["onset_density_by_bin"]
+    rms_by_bin = binned["rms_by_bin"]
+    centroid_by_bin = binned["centroid_by_bin"]
+
+    if trend_signal is None:
+        trend_signal = compute_trend_signal(features, candle_duration)
+    elif len(trend_signal) != n_bins:
+        # Defensive: pad/truncate rather than crash if a caller's sector
+        # audio came out a hair shorter/longer than the reference track.
+        fixed = np.zeros(n_bins)
+        take = min(n_bins, len(trend_signal))
+        fixed[:take] = trend_signal[:take]
+        trend_signal = fixed
+
     # "Volume" = how many market participants are trading. Loudness alone
     # isn't a great proxy (a single sustained loud note isn't busy trading),
     # so blend in note density: lots of attacks per second reads as a busy,
@@ -130,31 +197,20 @@ def build_candles(
 
     series = CandleSeries(start_price=start_price)
     price = start_price
-    rng = np.random.default_rng(42)  # deterministic "market noise"
-    momentum = 0.0
+    rng = np.random.default_rng(rng_seed)
 
     for b in range(n_bins):
         open_p = price
-
-        pitch_delta = 0.0
-        if b > 0 and not np.isnan(pitch_ema[b]) and not np.isnan(pitch_ema[b - 1]):
-            pitch_delta = pitch_ema[b] - pitch_ema[b - 1]
 
         sharpness = onset_by_bin[b]
         density = onset_density_by_bin[b]
         intensity = float(np.clip(0.5 * sharpness + 0.5 * density, 0.0, 1.0))
         volume = float(volume_by_bin[b])
 
-        # Momentum carries part of the previous move forward -- a melodic
-        # trend that's underway keeps nudging the drift for a few candles
-        # instead of vanishing the instant the raw slope wobbles.
-        trend_signal = 0.65 * pitch_delta + 0.35 * momentum
-        momentum = 0.6 * momentum + 0.4 * pitch_delta
-
         # Drift: a gentle, musically-driven bias. Deliberately small --
         # this is what accumulates into a visible trend over many candles,
         # it should not by itself decide any single candle's color.
-        drift = max_move_pct * 0.35 * np.clip(trend_signal / 3.0, -1.0, 1.0)
+        drift = max_move_pct * 0.35 * np.clip(trend_signal[b] / 3.0, -1.0, 1.0)
 
         # Volatility: how wide this candle's random swing is allowed to be.
         # Busy, sharp, well-traded passages get wide bars; quiet ones get

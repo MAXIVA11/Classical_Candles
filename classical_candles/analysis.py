@@ -8,6 +8,13 @@ For every short frame of audio we measure:
 
 These frame-level features are later grouped into fixed-size time bins,
 one bin per candle, by candles.py.
+
+`analyze_audio` loads a file and delegates to `analyze_features`, which
+works on an in-memory waveform. Sector splitting (sectors.py) calls
+`analyze_features` directly on band-filtered copies of the same waveform,
+so a multi-sector listing only ever loads the file and estimates pitch
+once, on the full mix -- the slow part of the pipeline doesn't multiply
+per sector.
 """
 
 from __future__ import annotations
@@ -30,20 +37,15 @@ class AudioFeatures:
     tempo: float                 # estimated tempo in BPM
 
 
-def analyze_audio(path: str, hop_length: int = 512, sr: int = 22050,
-                   estimate_pitch: bool = True, progress=None) -> AudioFeatures:
-    """Extract per-frame musical features from an audio file.
-
-    `progress` is an optional callable(str) used to report status.
-    """
+def analyze_features(y: np.ndarray, sr: int, hop_length: int = 512,
+                      estimate_pitch: bool = True, progress=None) -> "AudioFeatures":
+    """Extract per-frame musical features from an already-loaded waveform."""
     import librosa
 
     def report(msg: str) -> None:
         if progress:
             progress(msg)
 
-    report("Loading audio...")
-    y, sr = librosa.load(path, sr=sr, mono=True)
     duration = librosa.get_duration(y=y, sr=sr)
 
     report("Measuring loudness (RMS)...")
@@ -93,3 +95,18 @@ def analyze_audio(path: str, hop_length: int = 512, sr: int = 22050,
         duration=float(duration),
         tempo=tempo,
     )
+
+
+def analyze_audio(path: str, hop_length: int = 512, sr: int = 22050,
+                   estimate_pitch: bool = True, progress=None) -> AudioFeatures:
+    """Load an audio file and extract per-frame musical features from it.
+
+    `progress` is an optional callable(str) used to report status.
+    """
+    import librosa
+
+    if progress:
+        progress("Loading audio...")
+    y, loaded_sr = librosa.load(path, sr=sr, mono=True)
+    return analyze_features(y, loaded_sr, hop_length=hop_length,
+                             estimate_pitch=estimate_pitch, progress=progress)

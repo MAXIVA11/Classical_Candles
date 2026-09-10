@@ -14,6 +14,10 @@ seconds of work); the browser then draws the candlestick chart live, frame
 by frame, in perfect sync with the actual <audio> element as it plays. An
 optional "save as video" pass is still available on demand for anyone who
 wants an MP4 file to share.
+
+Each listing also splits into three frequency-band "sectors" (bass, mid,
+treble) that trade as their own correlated-but-distinct tickers, and a
+live market-wire of headlines generated from whichever sector moves most.
 """
 
 from __future__ import annotations
@@ -30,9 +34,11 @@ from flask import Flask, jsonify, request, send_from_directory, send_file
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from classical_candles.downloader import download_audio
-from classical_candles.analysis import analyze_audio
+from classical_candles.analysis import analyze_features
 from classical_candles.auto_params import derive_auto_params
-from classical_candles.candles import build_candles
+from classical_candles.candles import build_candles, compute_trend_signal
+from classical_candles.sectors import build_sectors
+from classical_candles.news import generate_headlines
 from classical_candles.ticker import generate_ticker
 from classical_candles.render import render_video
 
@@ -79,6 +85,33 @@ def _update(job_id: str, message: str = None, percent: int = None, status: str =
             job["status"] = status
 
 
+def _candle_payload(series) -> list:
+    return [
+        [round(c.t_start, 3), round(c.open, 4), round(c.high, 4), round(c.low, 4), round(c.close, 4), round(c.volume, 4)]
+        for c in series.candles
+    ]
+
+
+def _sector_summary(sector) -> dict:
+    series = sector.series
+    closes = [c.close for c in series.candles]
+    highs = [c.high for c in series.candles]
+    lows = [c.low for c in series.candles]
+    final_close = closes[-1]
+    change_pct = 100 * (final_close - series.start_price) / series.start_price
+    return {
+        "key": sector.key,
+        "label": sector.label,
+        "symbol": sector.ticker.symbol,
+        "open": round(series.start_price, 2),
+        "close": round(final_close, 2),
+        "high": round(max(highs), 2),
+        "low": round(min(lows), 2),
+        "change_pct": round(change_pct, 2),
+        "candles": _candle_payload(series),
+    }
+
+
 def _run_job(job_id: str, url: str) -> None:
     try:
         _update(job_id, "Cueing up the recording...", 5, "running")
@@ -86,26 +119,55 @@ def _run_job(job_id: str, url: str) -> None:
         with JOBS_LOCK:
             JOBS[job_id]["audio_path"] = track.path
 
-        _update(job_id, f"'{track.title}' is on the stand.", 15)
+        _update(job_id, f"'{track.title}' is on the stand.", 12)
         ticker = generate_ticker(track.title)
-        _update(job_id, f"Listed as {ticker.symbol} on the {ticker.exchange}.", 20)
+        _update(job_id, f"Listed as {ticker.symbol} on the {ticker.exchange}.", 16)
+
+        import librosa
+        _update(job_id, "Loading audio...", None)
+        y, sr = librosa.load(track.path, sr=22050, mono=True)
 
         def analysis_progress(msg: str) -> None:
             _update(job_id, msg, None)
 
-        features = analyze_audio(track.path, progress=analysis_progress)
-        _update(job_id, f"Tempo read at {features.tempo:.0f} BPM.", 75)
+        features = analyze_features(y, sr, estimate_pitch=True, progress=analysis_progress)
+        _update(job_id, f"Tempo read at {features.tempo:.0f} BPM.", 60)
 
         params = derive_auto_params(features, ticker)
-        _update(job_id, "Translating the score into ticks...", 85)
+        trend_signal = compute_trend_signal(features, params.candle_duration)
+
+        _update(job_id, "Translating the score into ticks...", 66)
         series = build_candles(
             features,
             candle_duration=params.candle_duration,
             start_price=params.start_price,
             max_move_pct=params.max_move_pct,
             max_wick_pct=params.max_wick_pct,
+            trend_signal=trend_signal,
+            rng_seed=42,
         )
-        _update(job_id, f"{len(series.candles)} candles printed. The floor is open.", 97)
+        _update(job_id, f"{len(series.candles)} candles printed.", 72)
+
+        def sector_progress(msg: str) -> None:
+            _update(job_id, msg, None)
+
+        sectors = build_sectors(
+            y, sr, features, track.title,
+            candle_duration=params.candle_duration,
+            max_move_pct=params.max_move_pct,
+            max_wick_pct=params.max_wick_pct,
+            trend_signal=trend_signal,
+            main_symbol=ticker.symbol,
+            progress=sector_progress,
+        )
+        _update(job_id, "Sector desks are open.", 92)
+
+        headlines = generate_headlines(
+            sources=[("index", f"the {ticker.symbol} Index", series)]
+            + [(s.key, s.label, s.series) for s in sectors],
+            candle_duration=params.candle_duration,
+        )
+        _update(job_id, f"{len(headlines)} wire headlines queued.", 96)
 
         closes = [c.close for c in series.candles]
         highs = [c.high for c in series.candles]
@@ -113,11 +175,6 @@ def _run_job(job_id: str, url: str) -> None:
         volumes = [c.volume for c in series.candles]
         final_close = closes[-1]
         change_pct = 100 * (final_close - series.start_price) / series.start_price
-
-        candle_payload = [
-            [round(c.t_start, 3), round(c.open, 4), round(c.high, 4), round(c.low, 4), round(c.close, 4), round(c.volume, 4)]
-            for c in series.candles
-        ]
 
         result = {
             "symbol": ticker.symbol,
@@ -132,7 +189,12 @@ def _run_job(job_id: str, url: str) -> None:
             "tempo": round(features.tempo, 1),
             "duration": round(features.duration, 1),
             "candle_duration": round(params.candle_duration, 4),
-            "candles": candle_payload,
+            "candles": _candle_payload(series),
+            "sectors": [_sector_summary(s) for s in sectors],
+            "headlines": [
+                {"t": round(h.t, 3), "text": h.text, "direction": h.direction, "source": h.source}
+                for h in headlines
+            ],
             "audio_url": f"/media/{job_id}/audio",
             "title": f"{ticker.symbol} · {track.title}",
         }
@@ -141,7 +203,7 @@ def _run_job(job_id: str, url: str) -> None:
             JOBS[job_id]["series"] = series
             JOBS[job_id]["ticker_title"] = result["title"]
 
-        _update(job_id, "Market is open. Press play.", 100, "done")
+        _update(job_id, "Market is open.", 100, "done")
         with JOBS_LOCK:
             JOBS[job_id]["result"] = result
 

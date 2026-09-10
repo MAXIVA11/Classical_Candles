@@ -39,6 +39,8 @@
   const liveDot = document.querySelector(".live-dot");
   const liveElapsed = document.getElementById("liveElapsed");
   const liveTotal = document.getElementById("liveTotal");
+  const sectorDesk = document.getElementById("sectorDesk");
+  const marketWireText = document.getElementById("marketWireText");
 
   let pollTimer = null;
   let videoPollTimer = null;
@@ -46,6 +48,9 @@
   let chart = null;
   let rafId = null;
   let currentJobId = null;
+  let sectorCharts = []; // [{ key, sparkline, priceEl, pctEl, startPrice }]
+  let headlines = [];
+  let lastHeadlineShown = -1;
 
   function showError(msg) {
     errorBanner.textContent = msg;
@@ -81,10 +86,78 @@
     liveDot.classList.remove("playing");
   }
 
+  function buildSectorDesk(result) {
+    sectorCharts.forEach((s) => s.sparkline.destroy());
+    sectorCharts = [];
+    sectorDesk.innerHTML = "";
+
+    (result.sectors || []).forEach((sector) => {
+      const card = document.createElement("div");
+      card.className = "sector-card";
+      card.innerHTML = `
+        <div class="sector-card-head">
+          <span class="sector-card-label">${sector.label}</span>
+          <span class="sector-card-symbol">${sector.symbol}</span>
+        </div>
+        <span class="sector-card-price">$${sector.open.toFixed(2)}</span><span class="sector-card-pct"></span>
+        <canvas></canvas>
+      `;
+      sectorDesk.appendChild(card);
+
+      const sparkline = new window.SectorSparkline(card.querySelector("canvas"), {
+        candles: sector.candles,
+        candleDuration: result.candle_duration,
+        startPrice: sector.open,
+      });
+      sparkline.draw(0);
+
+      sectorCharts.push({
+        key: sector.key,
+        sparkline,
+        priceEl: card.querySelector(".sector-card-price"),
+        pctEl: card.querySelector(".sector-card-pct"),
+        startPrice: sector.open,
+      });
+    });
+  }
+
+  function updateNewsWire(currentTime) {
+    let idx = -1;
+    for (let i = 0; i < headlines.length; i++) {
+      if (headlines[i].t <= currentTime) idx = i;
+      else break;
+    }
+    if (idx === lastHeadlineShown || idx < 0) return;
+    lastHeadlineShown = idx;
+    const h = headlines[idx];
+    marketWireText.textContent = h.text;
+    marketWireText.style.color = h.direction === "up" ? "var(--bull)" : "var(--bear)";
+    marketWireText.style.animation = "none";
+    // Force reflow so the fade-in animation restarts on each new headline.
+    void marketWireText.offsetWidth;
+    marketWireText.style.animation = "";
+  }
+
+  function tick(currentTime) {
+    if (chart) chart.draw(currentTime);
+    liveElapsed.textContent = formatTime(currentTime);
+
+    sectorCharts.forEach((s) => {
+      s.sparkline.draw(currentTime);
+      const price = s.sparkline.currentClose(currentTime);
+      const pct = 100 * (price - s.startPrice) / s.startPrice;
+      s.priceEl.textContent = `$${price.toFixed(2)}`;
+      s.priceEl.style.color = pct >= 0 ? "var(--bull)" : "var(--bear)";
+      s.pctEl.textContent = `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+      s.pctEl.style.color = pct >= 0 ? "var(--bull)" : "var(--bear)";
+    });
+
+    updateNewsWire(currentTime);
+  }
+
   function loop() {
     if (!chart) return;
-    chart.draw(audioEl.currentTime);
-    liveElapsed.textContent = formatTime(audioEl.currentTime);
+    tick(audioEl.currentTime);
     if (!audioEl.paused && !audioEl.ended) {
       rafId = requestAnimationFrame(loop);
     } else {
@@ -104,6 +177,13 @@
     liveTotal.textContent = formatTime(result.duration);
     liveElapsed.textContent = "0:00";
 
+    headlines = result.headlines || [];
+    lastHeadlineShown = -1;
+    marketWireText.textContent = headlines.length
+      ? "Standing by for the opening bell…"
+      : "No wire activity yet.";
+    buildSectorDesk(result);
+
     audioEl.src = result.audio_url;
     audioEl.onplay = () => {
       liveDot.classList.add("playing");
@@ -111,22 +191,19 @@
     };
     audioEl.onpause = () => {
       stopLoop();
-      chart.draw(audioEl.currentTime);
+      tick(audioEl.currentTime);
     };
     audioEl.onended = () => {
       stopLoop();
-      chart.draw(audioEl.duration || result.duration);
+      tick(audioEl.duration || result.duration);
     };
-    audioEl.onseeking = () => chart.draw(audioEl.currentTime);
-    audioEl.onseeked = () => chart.draw(audioEl.currentTime);
+    audioEl.onseeking = () => tick(audioEl.currentTime);
+    audioEl.onseeked = () => tick(audioEl.currentTime);
     // Fallback tick independent of requestAnimationFrame: fires on its own
     // clock during playback (roughly 4x/sec per spec) so the chart still
     // advances even in contexts where rAF gets throttled (backgrounded or
     // minimized windows), not just when the tab has an active paint loop.
-    audioEl.ontimeupdate = () => {
-      chart.draw(audioEl.currentTime);
-      liveElapsed.textContent = formatTime(audioEl.currentTime);
-    };
+    audioEl.ontimeupdate = () => tick(audioEl.currentTime);
 
     // Open the market the moment it's listed -- try to start playback
     // automatically rather than making the user hunt for a play button.
@@ -278,6 +355,11 @@
   againButton.addEventListener("click", () => {
     stopLoop();
     if (chart) { chart.destroy(); chart = null; }
+    sectorCharts.forEach((s) => s.sparkline.destroy());
+    sectorCharts = [];
+    sectorDesk.innerHTML = "";
+    headlines = [];
+    lastHeadlineShown = -1;
     audioEl.pause();
     audioEl.src = "";
     certificate.hidden = true;
