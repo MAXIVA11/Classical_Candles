@@ -52,10 +52,14 @@ class LiveCandleChart {
 
   _partial(c, frac) {
     frac = Math.max(0, Math.min(1, frac));
+    // Ease-out: the forming candle's body/wick settle into place instead
+    // of growing at a robotic constant rate -- fast at first, then eases
+    // as the bar completes, closer to how a real print settles.
+    const eased = 1 - (1 - frac) * (1 - frac);
     const [t_start, open, high, low, close, volume] = c;
-    const pClose = open + (close - open) * frac;
-    let pHigh = high >= open ? open + (high - open) * frac : high;
-    let pLow = low <= open ? open - (open - low) * frac : low;
+    const pClose = open + (close - open) * eased;
+    let pHigh = high >= open ? open + (high - open) * eased : high;
+    let pLow = low <= open ? open - (open - low) * eased : low;
     pHigh = Math.max(pHigh, open, pClose);
     pLow = Math.min(pLow, open, pClose);
     return [t_start, open, pHigh, pLow, pClose, volume * frac];
@@ -69,21 +73,31 @@ class LiveCandleChart {
 
     let idxEnd = Math.min(Math.floor(currentTime / this.candleDuration), n - 1);
     idxEnd = Math.max(0, idxEnd);
-    const idxStart = Math.max(0, idxEnd - this.visible + 1);
+    // A little extra history beyond the nominal window: candles scroll
+    // continuously off the left edge (see t0/t1 below) rather than
+    // popping out in whole-candle jumps, so a small buffer keeps that
+    // edge populated instead of clipping mid-scroll.
+    const idxStart = Math.max(0, idxEnd - this.visible - 2);
     const completed = candles.slice(idxStart, idxEnd);
     const cur = candles[idxEnd];
     const frac = (currentTime - cur[0]) / this.candleDuration;
     const live = this._partial(cur, frac);
     const window_ = completed.concat([live]);
 
-    const t0 = window_[0][0];
-    const t1 = cur[0] + this.candleDuration * 2;
+    // Continuous, time-based scroll: t0/t1 track currentTime directly, so
+    // every candle's x position slides by exactly as much real time as
+    // has actually elapsed since the last frame -- a smooth ticker-tape
+    // motion, not a jump cut every time the visible set changes by one bar.
+    const t1 = currentTime + this.candleDuration * 2;
+    const t0 = t1 - this.visible * this.candleDuration;
 
     // Auto-scale the price axis to this visible window (including the
-    // candle that's still forming), smoothed so it doesn't jump every
-    // frame -- the same auto-zoom a real trading screen does as it scrolls.
+    // candle that's still forming). Widening (a new high/low appears) snaps
+    // immediately so nothing ever gets clipped; narrowing eases in gently,
+    // the same "snap out, ease in" auto-zoom a real trading screen does.
     let localLo = Infinity, localHi = -Infinity;
     for (const c of window_) {
+      if (c[0] < t0 - this.candleDuration * 3) continue;
       if (c[3] < localLo) localLo = c[3];
       if (c[2] > localHi) localHi = c[2];
     }
@@ -93,9 +107,9 @@ class LiveCandleChart {
       this.viewLo = targetLo;
       this.viewHi = targetHi;
     } else {
-      const ema = 0.12;
-      this.viewLo += (targetLo - this.viewLo) * ema;
-      this.viewHi += (targetHi - this.viewHi) * ema;
+      const easeIn = 0.1;
+      this.viewLo = targetLo < this.viewLo ? targetLo : this.viewLo + (targetLo - this.viewLo) * easeIn;
+      this.viewHi = targetHi > this.viewHi ? targetHi : this.viewHi + (targetHi - this.viewHi) * easeIn;
     }
     const chartTop = 14, chartBottom = h * 0.72;
     const volTop = h * 0.78, volBottom = h - 10;

@@ -54,9 +54,12 @@ FG = "#e6edf3"
 def _partial_candle(c: Candle, elapsed_frac: float) -> Candle:
     """Interpolate a candle as if we're partway through forming it live."""
     elapsed_frac = float(np.clip(elapsed_frac, 0.0, 1.0))
-    close = c.open + (c.close - c.open) * elapsed_frac
-    hi = c.open + (c.high - c.open) * elapsed_frac if c.high >= c.open else c.high
-    lo = c.open - (c.open - c.low) * elapsed_frac if c.low <= c.open else c.low
+    # Ease-out so the bar settles into its final shape instead of growing
+    # at a robotic constant rate.
+    eased = 1.0 - (1.0 - elapsed_frac) ** 2
+    close = c.open + (c.close - c.open) * eased
+    hi = c.open + (c.high - c.open) * eased if c.high >= c.open else c.high
+    lo = c.open - (c.open - c.low) * eased if c.low <= c.open else c.low
     hi = max(hi, c.open, close)
     lo = min(lo, c.open, close)
     return Candle(c.t_start, c.t_end, c.open, hi, lo, close, c.volume * elapsed_frac, c.intensity)
@@ -147,9 +150,11 @@ def render_video(
         if view["lo"] is None:
             view["lo"], view["hi"] = target_lo, target_hi
         else:
-            ema = 0.4
-            view["lo"] = ema * target_lo + (1 - ema) * view["lo"]
-            view["hi"] = ema * target_hi + (1 - ema) * view["hi"]
+            # Snap out immediately if a new extreme needs more room (never
+            # clip a spike); ease in gently when the range could shrink.
+            ease_in = 0.35
+            view["lo"] = target_lo if target_lo < view["lo"] else ease_in * target_lo + (1 - ease_in) * view["lo"]
+            view["hi"] = target_hi if target_hi > view["hi"] else ease_in * target_hi + (1 - ease_in) * view["hi"]
         min_body_h_box[0] = (view["hi"] - view["lo"]) * 0.004
 
         for c in completed:

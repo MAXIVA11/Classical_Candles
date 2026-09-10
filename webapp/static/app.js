@@ -127,6 +127,16 @@
       chart.draw(audioEl.currentTime);
       liveElapsed.textContent = formatTime(audioEl.currentTime);
     };
+
+    // Open the market the moment it's listed -- try to start playback
+    // automatically rather than making the user hunt for a play button.
+    // Browsers can still block unmuted autoplay outside a fresh user
+    // gesture; if that happens we just fall back to "press play" instead
+    // of erroring.
+    audioEl.play().then(
+      () => { formHint.textContent = "Market open."; },
+      () => { formHint.textContent = "Listed. Press play below."; }
+    );
   }
 
   function renderResult(result) {
