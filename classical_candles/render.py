@@ -18,6 +18,15 @@ So we split drawing into two tiers:
 
 Frames are streamed straight into an ffmpeg subprocess as raw RGBA bytes,
 bypassing matplotlib's own (always-fully-redrawing) animation writer.
+
+The price axis is NOT fixed to the whole track's min/max. A quiet intro
+and a fortissimo climax can differ by a huge multiple, and pinning the
+y-axis to that full range makes the quiet parts look like a flat little
+squiggle -- exactly the "snake" a real trading screen never shows, because
+real charts auto-scale to whatever's currently on screen. So the axis
+here re-fits itself to the visible window every time a new candle joins
+it (smoothed with an EMA so it doesn't jump), the same way a live chart
+zooms as you scroll.
 """
 
 from __future__ import annotations
@@ -79,12 +88,6 @@ def render_video(
     n_frames = max(1, int(np.ceil(duration * fps)))
     candle_duration = candles[0].t_end - candles[0].t_start
     body_width = candle_duration * 0.7
-    min_body_h = None  # set once price range is known, below
-
-    all_prices = np.array([v for c in candles for v in (c.high, c.low)])
-    price_min, price_max = float(all_prices.min()), float(all_prices.max())
-    pad = (price_max - price_min) * 0.08 or 1.0
-    min_body_h = (price_max - price_min) * 0.0015
 
     fig_w, fig_h = width_px / dpi, height_px / dpi
     fig, (ax, ax_vol) = plt.subplots(
@@ -99,7 +102,6 @@ def render_video(
             spine.set_color(GRID)
         a.grid(True, color=GRID, linewidth=0.6, alpha=0.7)
 
-    ax.set_ylim(price_min - pad, price_max + pad)
     ax.set_ylabel("Price", color=FG, fontsize=9)
     ax_vol.set_ylim(0, 1.05)
     ax_vol.set_ylabel("Volume", color=FG, fontsize=9)
@@ -123,6 +125,8 @@ def render_video(
     static_artists = []
     background = [None]
     last_idx_end = [-1]
+    view = {"lo": None, "hi": None}
+    min_body_h_box = [0.0]
 
     def rebuild_static(idx_end: int) -> None:
         for artist in static_artists:
@@ -132,13 +136,29 @@ def render_video(
         idx_start = max(0, idx_end - visible_candles + 1)
         completed = candles[idx_start:idx_end]
 
+        # Auto-scale the price axis to what's actually on screen right now
+        # (including the candle that's about to form), not the whole track.
+        window_candles = candles[idx_start:idx_end + 1]
+        local_lo = min(c.low for c in window_candles)
+        local_hi = max(c.high for c in window_candles)
+        local_pad = (local_hi - local_lo) * 0.18 or local_hi * 0.01 or 1.0
+        target_lo, target_hi = local_lo - local_pad, local_hi + local_pad
+
+        if view["lo"] is None:
+            view["lo"], view["hi"] = target_lo, target_hi
+        else:
+            ema = 0.4
+            view["lo"] = ema * target_lo + (1 - ema) * view["lo"]
+            view["hi"] = ema * target_hi + (1 - ema) * view["hi"]
+        min_body_h_box[0] = (view["hi"] - view["lo"]) * 0.004
+
         for c in completed:
             color = GREEN if c.close >= c.open else RED
             wick = Line2D([c.t_start + body_width / 2] * 2, [c.low, c.high],
                           color=color, linewidth=1.0, solid_capstyle="round")
             ax.add_line(wick)
             y0 = min(c.open, c.close)
-            h = max(abs(c.close - c.open), min_body_h)
+            h = max(abs(c.close - c.open), min_body_h_box[0])
             body = Rectangle((c.t_start, y0), body_width, h, facecolor=color, edgecolor=color, linewidth=0.5)
             ax.add_patch(body)
             vol = Rectangle((c.t_start, 0), body_width, max(c.volume, 0.01), facecolor=color, edgecolor="none", alpha=0.6)
@@ -149,6 +169,7 @@ def render_video(
         t0 = anchor.t_start
         t1 = candles[idx_end].t_end
         ax.set_xlim(t0, t1 + candle_duration * 2)
+        ax.set_ylim(view["lo"], view["hi"])
         ax_vol.set_xlim(t0, t1 + candle_duration * 2)
         ax.set_title(title, color=FG, fontsize=13, fontweight="bold", loc="left")
 
@@ -168,7 +189,7 @@ def render_video(
 
         live_body.set_x(pc.t_start)
         live_body.set_y(min(pc.open, pc.close))
-        live_body.set_height(max(abs(pc.close - pc.open), min_body_h))
+        live_body.set_height(max(abs(pc.close - pc.open), min_body_h_box[0]))
         live_body.set_facecolor(color)
         live_body.set_edgecolor(color)
 

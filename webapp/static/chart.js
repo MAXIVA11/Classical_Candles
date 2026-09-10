@@ -23,15 +23,13 @@ class LiveCandleChart {
       brass: "#c8a24d",
     };
 
-    let priceMin = Infinity, priceMax = -Infinity;
-    for (const c of candles) {
-      if (c[3] < priceMin) priceMin = c[3];
-      if (c[2] > priceMax) priceMax = c[2];
-    }
-    this.priceMin = priceMin;
-    this.priceMax = priceMax;
-    this.pad = (priceMax - priceMin) * 0.1 || 1;
-    this.minBodyH = (priceMax - priceMin) * 0.0025;
+    // The price axis auto-scales to whatever's currently visible (see
+    // draw()), not the whole track -- a quiet intro and a fortissimo
+    // climax can differ hugely, and pinning the axis to the full range
+    // squashes the quiet parts into a flat line. viewLo/viewHi hold the
+    // current (EMA-smoothed) axis bounds between frames.
+    this.viewLo = null;
+    this.viewHi = null;
 
     this._resize();
     this._resizeHandler = () => this._resize();
@@ -81,12 +79,30 @@ class LiveCandleChart {
     const t0 = window_[0][0];
     const t1 = cur[0] + this.candleDuration * 2;
 
+    // Auto-scale the price axis to this visible window (including the
+    // candle that's still forming), smoothed so it doesn't jump every
+    // frame -- the same auto-zoom a real trading screen does as it scrolls.
+    let localLo = Infinity, localHi = -Infinity;
+    for (const c of window_) {
+      if (c[3] < localLo) localLo = c[3];
+      if (c[2] > localHi) localHi = c[2];
+    }
+    const localPad = (localHi - localLo) * 0.18 || localHi * 0.01 || 1;
+    const targetLo = localLo - localPad, targetHi = localHi + localPad;
+    if (this.viewLo === null) {
+      this.viewLo = targetLo;
+      this.viewHi = targetHi;
+    } else {
+      const ema = 0.12;
+      this.viewLo += (targetLo - this.viewLo) * ema;
+      this.viewHi += (targetHi - this.viewHi) * ema;
+    }
     const chartTop = 14, chartBottom = h * 0.72;
     const volTop = h * 0.78, volBottom = h - 10;
     const padLeft = 8, padRight = 8;
 
     const xScale = (t) => padLeft + ((t - t0) / (t1 - t0)) * (w - padLeft - padRight);
-    const yScale = (p) => chartTop + (1 - (p - (this.priceMin - this.pad)) / ((this.priceMax + this.pad) - (this.priceMin - this.pad))) * (chartBottom - chartTop);
+    const yScale = (p) => chartTop + (1 - (p - this.viewLo) / (this.viewHi - this.viewLo)) * (chartBottom - chartTop);
     const volH = (v) => Math.max(v, 0.01) / 1.05 * (volBottom - volTop);
 
     ctx.fillStyle = colors.bg;
@@ -100,7 +116,7 @@ class LiveCandleChart {
     ctx.textBaseline = "middle";
     const gridLines = 4;
     for (let i = 0; i <= gridLines; i++) {
-      const price = (this.priceMin - this.pad) + ((this.priceMax + this.pad) - (this.priceMin - this.pad)) * (i / gridLines);
+      const price = this.viewLo + (this.viewHi - this.viewLo) * (i / gridLines);
       const y = yScale(price);
       ctx.beginPath();
       ctx.moveTo(padLeft, y);
