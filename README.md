@@ -40,9 +40,15 @@ Open **http://127.0.0.1:5000**, paste a link, ring the bell. The setup script cr
 
 The chart draws live in your browser, synced to playback, no video render needed. Want a file? Hit **Save as Video**.
 
+## The whole exchange floor
+
+Every listing also splits into three sectors by frequency register — **Bass & Cellos**, **Winds & Violas**, **Violins & Flutes** — each trading as its own ticker with its own price, % change, and sparkline. They share the same underlying melodic drift as the main index (real sectors move together on sentiment) but draw independent volatility, so they diverge over the track instead of moving in lockstep.
+
+A live **market wire** scans the index and all three sectors for their biggest moves and prints headlines as they happen — *"Panic hits Bass & Cellos"*, *"the Index breaks out on heavy volume"* — timed to the actual playback position.
+
 ## Under the hood
 
-`yt-dlp` downloads → `librosa` analyzes loudness, tempo, and melody → a ticker gets minted from the title → features become OHLCV candles → your browser paints them live on a `<canvas>`.
+`yt-dlp` downloads → `librosa` analyzes loudness, tempo, and melody once → a ticker gets minted from the title → features become OHLCV candles for the index and each sector → your browser paints it all live on `<canvas>`.
 
 Terminal fan? `python main.py --url "..."` skips the browser.
 
